@@ -55,6 +55,8 @@ class EDMCBoxelSurveyor:
         self.known_boxel_idxs = set()
 
         self.skip_known = tk.BooleanVar(value=True)
+        self.auto_copy = tk.BooleanVar(value=True)
+        self.pending_auto_copy = False
 
         self.frame = None
         self.last_state = None
@@ -152,6 +154,7 @@ class EDMCBoxelSurveyor:
         :return: The name of the plugin, which will be used by EDMC for logging and for the settings window
         """
         self.skip_known.set(config.get_bool(key='boxelsurveyor_skipknown', default=True))
+        self.auto_copy.set(config.get_bool(key='boxelsurveyor_autocopy', default=True))
         return PLUGIN_NAME
 
     def on_unload(self) -> None:
@@ -174,10 +177,12 @@ class EDMCBoxelSurveyor:
         :return: The frame to add to the settings window
         """
         self.skip_known.set(config.get_bool(key='boxelsurveyor_skipknown', default=True))
+        self.auto_copy.set(config.get_bool(key='boxelsurveyor_autocopy', default=True))
 
         frame = nb.Frame(parent)
         nb.Label(frame, text=f'EDMC Boxel Surveyor v. {PLUGIN_VERSION}').grid(row=0, sticky=tk.W)
         nb.Checkbutton(frame, text='Skip known systems', variable=self.skip_known).grid(row=1, sticky=tk.W)
+        nb.Checkbutton(frame, text='Auto-copy next star on jump', variable=self.auto_copy).grid(row=2, sticky=tk.W)
         return frame
 
     def on_preferences_closed(self, cmdr: str, is_beta: bool) -> None:
@@ -190,6 +195,7 @@ class EDMCBoxelSurveyor:
         :param is_beta: Whether or not EDMC is currently marked as in beta mode
         """
         config.set('boxelsurveyor_skipknown', self.skip_known.get())
+        config.set('boxelsurveyor_autocopy', self.auto_copy.get())
         self.update_ui(self.last_state)
 
     def do_copy(self, text):
@@ -273,6 +279,14 @@ class EDMCBoxelSurveyor:
             except Exception as e:
                 logger.error("couldn't update boxel stats!", exc_info=e)
 
+        if self.pending_auto_copy and self.auto_copy.get() and self.last_state:
+            self.pending_auto_copy = False
+            if self.skip_known.get():
+                nextStar = boxel.nextInBoxel(self.last_state["SystemAddress"], self.known_boxel_idxs)
+            else:
+                nextStar = boxel.nextInBoxel(self.last_state["SystemAddress"], set())
+            self.do_copy(nextStar)
+
         self.update_ui(self.last_state)
 
     def update_ui(self, state):
@@ -316,6 +330,9 @@ class EDMCBoxelSurveyor:
 
                 parsed_id64 = boxel.parse_id64(self.current_id64)
                 self.current_h, self.current_max_h = boxel.currentBoxelInLayer(parsed_id64)
+
+                if entry['event'] in ['FSDJump', 'CarrierJump']:
+                    self.pending_auto_copy = True
 
                 self.update_ui(state)
                 self.get_boxel_stats(state["SystemName"], state["SystemAddress"])
